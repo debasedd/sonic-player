@@ -1,8 +1,13 @@
 # Sonic — Spotify Client ID setup
 
-Sonic needs **one thing** from you before it can control playback: a Spotify
-**Client ID**. This file walks through getting one, and there is no client secret
-involved.
+Sonic needs **one thing** from you before it can control playback through the
+Spotify Web API: a Spotify **Client ID**. This file walks through getting one, and
+there is no client secret involved.
+
+**This step is optional.** Sonic's primary control path is local Windows media
+(GSMTC), which needs no account at all — play/pause, skip, seek, shuffle, repeat
+and artwork all work with whatever app is already playing. The Spotify connection
+adds device picking, volume control on Connect devices, and the Web API path.
 
 ---
 
