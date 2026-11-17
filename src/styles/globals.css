@@ -1,0 +1,689 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------------------------------------------------------------------------
+   Sonic design tokens
+   ---------------------------------------------------------------------------
+   The window is fully transparent and *no native material* is applied: a DWM
+   backdrop fills the whole HWND rectangle and cannot be clipped to a border
+   radius, which put a visible square panel behind the pill. Everything that makes
+   this read as glass is painted here, clipped by the shell's own radius, and looks
+   the same on Windows 10 and 11.
+
+   Layer order inside the shell (back to front):
+     1. tint + one gentle vertical ramp   (the material itself)
+     2. .glass-ambient   album-derived colour, very low intensity
+     3. .glass-sheen     a specular band that leans toward the pointer
+     4. .glass-light     the cursor's radial reflection
+     5. inset rims       the thickness of the cut edge
+     6. content
+--------------------------------------------------------------------------- */
+
+:root {
+  /* Base tint. */
+  --glass-tint: 16 16 21;
+  --glass-alpha: 0.3;
+
+  /* Blur: there is no native blur on a transparent window, so this CSS pass is
+     what frosts the desktop. Short on purpose — a large backdrop-filter over a
+     transparent window averages the desktop into one flat tone, so the glass
+     reads as grey plastic. 10px frosts just enough. */
+  --glass-blur: 6px;
+  --glass-blur-strong: 10px;
+
+  --rim: 255 255 255;
+
+  /* Ambient palette, overwritten at runtime from the album artwork. The fallback
+     is a neutral cool grey so an unknown cover still looks intentional. */
+  --art-base: 148 148 158;
+  --art-lift: 196 196 206;
+
+  --text: #ffffff;
+  --text-muted: #adadb8;
+  --text-faint: #7a7a86;
+
+  --accent: #1ed760;
+
+  /* Pointer position inside the shell, written by usePointerGlow. */
+  --gx: 50%;
+  --gy: 50%;
+  --gi: 0;
+
+  /* Motion */
+  --ease-glass: cubic-bezier(0.42, 0, 0.58, 1);
+  --dur-fast: 140ms;
+  --dur-mid: 220ms;
+  --dur-slow: 340ms;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: transparent;
+  color: var(--text);
+  font-family:
+    "Inter var", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI Variable Display",
+    "Segoe UI", system-ui, sans-serif;
+  font-feature-settings: "cv02", "cv03", "cv04", "ss01";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+}
+
+/* The window is frameless and non-resizable; nothing should ever scroll. */
+#root {
+  overflow: hidden;
+}
+
+/* Thin, unobtrusive scrollbars inside the settings panel only. */
+.scroll-slim {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+.scroll-slim::-webkit-scrollbar {
+  width: 6px;
+}
+.scroll-slim::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-slim::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+}
+.scroll-slim::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.28);
+}
+
+@layer components {
+  /* -------------------------------------------------------------------------
+     Glass surfaces
+  ------------------------------------------------------------------------- */
+
+  /**
+   * The player shell.
+   *
+   * `isolation: isolate` creates a stacking context so the decorative layers can
+   * sit at `z-index: -1`: above the shell's own tint, below the content. That is
+   * what lets the glow and the cursor light read as *inside* the material rather
+   * than painted over the text.
+   */
+  .glass-shell {
+    position: relative;
+    isolation: isolate;
+    /* Must stay `visible`.
+       The volume and device popovers are children of the shell and hang outside
+       its box; clipping here would cut them off at the pill edge. The expanded
+       panel's bottom row does paint a full-width `border-t` band, and with
+       `overflow: visible` that band can reach the bottom corners — but the shell's
+       own `border-radius` still rounds the painted background, so the corner reads
+       as a curve. What must NOT happen is clipping the shell's own background,
+       which is what produced a pale rectangular sliver beside the glass. */
+    overflow: visible;
+
+    /* The alpha is applied via a colour-mix-free rgba() so older WebView2 builds
+       that lack `color-mix()` still render. */
+    background-color: rgba(16, 16, 21, var(--glass-alpha));
+
+    /* One gentle vertical ramp only. A big radial "specular pool" here is what
+       flattens the glass: it lays a near-uniform white veil over the already
+       blurred backdrop, and the desktop stops reading through. Depth comes from
+       the layers above the tint and the inset rims in box-shadow. */
+    background-image: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.055) 0%,
+      rgba(255, 255, 255, 0.012) 30%,
+      rgba(0, 0, 0, 0.05) 100%
+    );
+
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+    backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+
+    /* Depth comes entirely from these shadows, because there is no native
+       material behind the shell any more. The top rim is the single strongest
+       cue for "glass" at this size, so it gets real presence.
+
+       ONLY INSET SHADOWS. A drop shadow (`0 30px 70px …`) paints outside the
+       border box, but the window is exactly the shell's size, so the OS clips
+       it at the window edge. That left a hard rectangular ring in the corners
+       that are supposed to be transparent — the "square background" behind the
+       pill. Inset shadows cannot escape the radius, so the silhouette stays
+       rounded. Grounding is faked with a stronger inner bottom rim instead. */
+    box-shadow:
+      /* inner top rim — the bright edge of cut glass */
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.34),
+      /* inner bottom rim — thickness / refraction, and the grounding cue */
+      inset 0 -1px 0 0 rgba(0, 0, 0, 0.5),
+      inset 0 -6px 14px -12px rgba(0, 0, 0, 0.42),
+      /* faint inner fill so the body reads as a volume, not a film */
+      inset 0 0 20px 0 rgba(255, 255, 255, 0.02);
+  }
+
+  /* Second specular pass: a hard, narrow highlight along the very top edge.
+     This is the detail that most reads as "real glass" at small sizes. */
+  .glass-shell::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    z-index: 1;
+    background: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.16) 0px,
+      rgba(255, 255, 255, 0.05) 1px,
+      rgba(255, 255, 255, 0) 3px
+    );
+    opacity: 0.9;
+  }
+
+  /* Delicate translucent border, masked so it only ever paints the 1px edge.
+     The inset hairline above already lights the top edge, so this layer stays
+     faint: stacking a second bright ring on top is what read as a rough,
+     double-drawn border on the small mini pill. */
+  .glass-shell::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    pointer-events: none;
+    z-index: 3;
+    background: linear-gradient(
+      155deg,
+      rgba(255, 255, 255, 0.2) 0%,
+      rgba(255, 255, 255, 0.07) 22%,
+      rgba(255, 255, 255, 0.03) 50%,
+      rgba(255, 255, 255, 0.02) 74%,
+      rgba(255, 255, 255, 0.08) 100%
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+
+  /* The mini pill is 60px tall with a 30px radius: a translucent hairline plus
+     a blurred album wash can leave a pale, uneven sliver at the corners, so it
+     gets a slightly denser tint and no clipped glow layer. */
+  .glass-shell[data-compact="true"] {
+    background-color: rgba(14, 14, 18, calc(var(--glass-alpha) + 0.06));
+  }
+
+  /* At mini height the blurred cover wash can read as a pale band at the edges,
+     so it is dialled back rather than removed. */
+  .glass-shell[data-compact="true"] .glass-art-wash {
+    opacity: 0.12;
+    filter: blur(14px) saturate(1.1) brightness(0.74);
+  }
+
+  .glass-shell[data-compact="true"] .glass-fx::after {
+    opacity: 0.016;
+  }
+
+  /* -------------------------------------------------------------------------
+     Interactive glass layers
+     -------------------------------------------------------------------------
+     All three live inside `.glass-fx`, the only element allowed to clip. The
+     shell itself must NOT get `overflow: hidden` — popovers (volume, device
+     picker) are positioned outside its box and would be cut off.
+  */
+
+  .glass-fx {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    overflow: hidden;
+    pointer-events: none;
+    z-index: -1;
+    /* Contain the paint so animating one layer does not force the browser to
+       reason about the whole window. */
+    contain: paint;
+  }
+
+  /* Fine stochastic grain and album-color wash. */
+  .glass-fx::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: url("../assets/glass-grain.svg") repeat 0 0 / 192px 192px;
+    opacity: 0.022;
+    mix-blend-mode: soft-light;
+    pointer-events: none;
+  }
+
+  /* Album cover wash: a wrapper that clips to the island radius, with the
+     crossfading image inside. Keeping the clip on the wrapper (not the image)
+     is what stops blurred edges from bleeding past the rounded corners. */
+  .glass-art-wash {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    border-radius: inherit;
+    pointer-events: none;
+  }
+
+  .glass-art-wash-image {
+    position: absolute;
+    inset: -18%;
+    border-radius: inherit;
+    background-position: center;
+    background-size: cover;
+    filter: blur(16px) saturate(1.15) brightness(0.76);
+    will-change: opacity, transform;
+  }
+
+  .glass-fx-artwork .glass-ambient {
+    opacity: 0.42;
+  }
+
+  .glass-fx-artwork .glass-sheen {
+    opacity: 0.78;
+  }
+
+  .glass-fx-artwork .glass-light {
+    mix-blend-mode: screen;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .glass-art-wash {
+      filter: blur(16px) saturate(1.1) brightness(0.72);
+    }
+  }
+
+  /* Album-derived ambient colour. Two very wide, very faint pools, so the surface
+     takes on the record's character without ever looking like a neon sign. */
+  .glass-ambient {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(120% 95% at 14% 4%, rgb(var(--art-lift) / 0.22), transparent 62%),
+      radial-gradient(95% 85% at 86% 102%, rgb(var(--art-base) / 0.18), transparent 66%);
+    opacity: 0.85;
+    transition: background 420ms var(--ease-glass);
+  }
+
+  /* The specular band. It leans toward the pointer so the highlight appears to
+     travel across a curved surface rather than sit still. */
+  .glass-sheen {
+    position: absolute;
+    inset: -30%;
+    background: linear-gradient(
+      104deg,
+      transparent 34%,
+      rgba(255, 255, 255, 0.035) 44%,
+      rgba(255, 255, 255, 0.075) 50%,
+      rgba(255, 255, 255, 0.035) 56%,
+      transparent 66%
+    );
+    transform: translate3d(calc((var(--gi) - 0.5) * 8%), 0, 0);
+    transition: transform 500ms var(--ease-glass);
+  }
+
+  /* The cursor's reflection: a soft pool with a tighter core, so it reads as light
+     falling on a curved surface rather than a flat circle. */
+  .glass-light {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(
+        190px circle at var(--gx) var(--gy),
+        rgba(255, 255, 255, 0.16),
+        rgba(255, 255, 255, 0.055) 36%,
+        transparent 66%
+      ),
+      radial-gradient(
+        54px circle at var(--gx) var(--gy),
+        rgba(255, 255, 255, 0.13),
+        transparent 72%
+      );
+    opacity: var(--gi);
+    /* Fade in and out rather than snapping. Position is written per frame with no
+       transition so the light tracks the cursor exactly; only presence is eased. */
+    transition: opacity 320ms var(--ease-glass);
+  }
+
+  /** Hover brightens the glass without moving anything. */
+  .glass-shell-hover {
+    transition:
+      background-color var(--dur-mid) var(--ease-glass),
+      box-shadow var(--dur-mid) var(--ease-glass);
+  }
+  .glass-shell-hover:hover {
+    background-color: rgba(16, 16, 21, calc(var(--glass-alpha) + 0.05));
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.38),
+      inset 0 2px 1px -1px rgba(255, 255, 255, 0.18),
+      inset 0 -1px 0 0 rgba(0, 0, 0, 0.55),
+      inset 0 -8px 18px -10px rgba(0, 0, 0, 0.5),
+      inset 0 0 26px 0 rgba(255, 255, 255, 0.032);
+  }
+
+  /** A raised sub-surface (popover, inset panels). */
+  .glass-raised {
+    position: relative;
+    isolation: isolate;
+    background-color: rgba(26, 26, 32, 0.5);
+    background-image: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.09) 0%,
+      rgba(255, 255, 255, 0.02) 100%
+    );
+    /* Inset only: a drop shadow here would be clipped by the window edge and
+       paint a hard rectangular halo around the popover. */
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.16),
+      inset 0 -1px 0 0 rgba(0, 0, 0, 0.35),
+      inset 0 -10px 22px -14px rgba(0, 0, 0, 0.6);
+    -webkit-backdrop-filter: blur(var(--glass-blur-strong)) saturate(180%);
+    backdrop-filter: blur(var(--glass-blur-strong)) saturate(180%);
+  }
+
+  /* -------------------------------------------------------------------------
+     Controls
+  ------------------------------------------------------------------------- */
+
+  /** Circular icon button with a hover disc that fades in beneath the glyph. */
+  .ctl {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    color: rgba(255, 255, 255, 0.74);
+    transition:
+      color var(--dur-fast) var(--ease-glass),
+      transform var(--dur-fast) var(--ease-glass),
+      background-color var(--dur-fast) var(--ease-glass);
+    will-change: transform;
+  }
+  .ctl::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: rgba(255, 255, 255, 0.1);
+    opacity: 0;
+    transform: scale(0.82);
+    transition:
+      opacity var(--dur-fast) var(--ease-glass),
+      transform var(--dur-fast) var(--ease-glass);
+  }
+  .ctl:hover {
+    color: #fff;
+  }
+  .ctl:hover::before {
+    opacity: 1;
+    transform: scale(1);
+  }
+  .ctl:active {
+    transform: scale(0.94);
+  }
+  .ctl:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(30, 215, 96, 0.55);
+  }
+  .ctl > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  /** Primary play/pause: the one solid element in the whole UI. */
+  .ctl-primary {
+    background: #ffffff;
+    color: #0a0a0c;
+    box-shadow:
+      0 6px 18px -6px rgba(0, 0, 0, 0.8),
+      0 1px 0 0 rgba(255, 255, 255, 0.9) inset;
+  }
+  .ctl-primary::before {
+    background: rgba(0, 0, 0, 0.08);
+  }
+  .ctl-primary:hover {
+    color: #000;
+  }
+
+  /** Active toggle state (shuffle/repeat on). */
+  .ctl-active {
+    color: var(--accent);
+  }
+  .ctl-active::after {
+    content: "";
+    position: absolute;
+    bottom: 1px;
+    left: 50%;
+    width: 3px;
+    height: 3px;
+    border-radius: 9999px;
+    background: var(--accent);
+    transform: translateX(-50%);
+    box-shadow: 0 0 6px rgba(30, 215, 96, 0.9);
+  }
+
+  /* -------------------------------------------------------------------------
+     Range inputs (volume + settings sliders)
+  ------------------------------------------------------------------------- */
+
+  .range {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 16px;
+    background: transparent;
+    cursor: pointer;
+  }
+  .range::-webkit-slider-runnable-track {
+    height: 3px;
+    border-radius: 9999px;
+    background: rgba(255, 255, 255, 0.14);
+  }
+  .range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 11px;
+    height: 11px;
+    margin-top: -4px;
+    border-radius: 9999px;
+    background: #ffffff;
+    box-shadow:
+      0 1px 4px rgba(0, 0, 0, 0.6),
+      0 0 0 0.5px rgba(0, 0, 0, 0.2);
+    transition: transform var(--dur-fast) var(--ease-glass);
+  }
+  .range:hover::-webkit-slider-thumb {
+    transform: scale(1.18);
+  }
+  .range:active::-webkit-slider-thumb {
+    transform: scale(1.28);
+  }
+  .range::-moz-range-track {
+    height: 3px;
+    border-radius: 9999px;
+    background: rgba(255, 255, 255, 0.14);
+  }
+  .range::-moz-range-thumb {
+    width: 11px;
+    height: 11px;
+    border: none;
+    border-radius: 9999px;
+    background: #fff;
+  }
+
+  /* -------------------------------------------------------------------------
+     Text helpers
+  ------------------------------------------------------------------------- */
+
+  .text-mono-num {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  /** Two-line clamp that always ends in an ellipsis. */
+  .clamp-1 {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* -------------------------------------------------------------------------
+     Pocket
+  ------------------------------------------------------------------------- */
+
+  /* Pocket rows are drag sources for native drag-out. Suppressing the text
+     selection ghost keeps Windows from drawing a second, blurred copy of the
+     row under the cursor. */
+  .pocket-row {
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: default;
+  }
+
+  /* The row's own hover tint. A translucent fill rather than a border keeps the
+     glass material visible underneath, which is the whole point of the surface. */
+  .pocket-row:hover {
+    background-color: rgba(255, 255, 255, 0.055);
+  }
+
+  /* A grab cursor on the row body signals "this can be dragged" without a
+     tooltip or a handle that would eat horizontal space. */
+  .pocket-row:active {
+    cursor: grabbing;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Artwork: the fallback is a generated gradient, never a broken image.
+--------------------------------------------------------------------------- */
+
+.artwork-fallback {
+  background:
+    radial-gradient(120% 120% at 20% 0%, rgba(30, 215, 96, 0.24), transparent 58%),
+    linear-gradient(150deg, #23232b 0%, #14141a 60%, #0d0d12 100%);
+}
+
+/* Prevent the Windows drag ghost / text selection while dragging the window. */
+.drag-region {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* ---------------------------------------------------------------------------
+   Decorative equaliser
+   ---------------------------------------------------------------------------
+   This is explicitly NOT an audio spectrum. The Spotify Web API exposes no
+   frequency data, so these bars are a decorative animation whose only input is
+   whether playback is running. It is never labelled as an analyser anywhere in
+   the UI or in code.
+--------------------------------------------------------------------------- */
+
+.eq-bar {
+  transform-origin: bottom;
+  animation: eq-bounce 1s var(--ease-glass) infinite alternate;
+  will-change: transform;
+}
+
+@keyframes eq-bounce {
+  from {
+    transform: scaleY(0.28);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+
+/* Framer Motion respects this. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+
+  /* The pointer light is decorative; park it at rest. */
+  .glass-light,
+  .glass-sheen {
+    display: none;
+  }
+
+  .eq-bar {
+    animation: none !important;
+    transform: scaleY(0.45);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Solid surface — the flat black pill of a real iPhone Dynamic Island
+
+   Selected by `data-solid="true"` on the app root (see App.tsx). This is a
+   material swap, not a transparency value: every decorative layer is removed
+   and the shell is painted one opaque colour.
+
+   Why the layers are `display: none` rather than `opacity: 0`: the album wash,
+   sheen and cursor light all cost a composite pass each frame, and keeping them
+   mounted-but-invisible would make "solid" the *slower* of the two modes at
+   exactly the moment the user asked for the cheaper one.
+
+   The inset rims stay. A real Dynamic Island is a physical cutout with a lit
+   top edge; without them the pill reads as a flat sticker rather than a hole in
+   the screen.
+   --------------------------------------------------------------------------- */
+[data-solid="true"] .glass-shell {
+  /* Opaque near-black, the actual iPhone cutout colour. */
+  background-color: #000;
+  background-image: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+
+  /* The glass rim was tuned for a translucent body; on black, the bright top
+     highlight reads as a grey smear. Keep it crisp and much quieter. */
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.14),
+    inset 0 -1px 0 0 rgba(0, 0, 0, 0.6);
+}
+
+/* Second specular pass: off, because the rim above already draws the edge. */
+[data-solid="true"] .glass-shell::before {
+  display: none;
+}
+
+/* The masked hairline border is a glass cue; on black it just looks dirty. */
+[data-solid="true"] .glass-shell::after {
+  display: none;
+}
+
+/* Every decorative layer goes. */
+[data-solid="true"] .glass-fx {
+  display: none;
+}
+
+/* The mini variant had a denser tint to survive the blurred album wash. On a
+   solid surface there is no wash to survive, so it is the same black. */
+[data-solid="true"] .glass-shell[data-compact="true"] {
+  background-color: #000;
+}
+
+/* Ambient glow behind the island is part of the glass material: it bleeds the
+   album colour onto the desktop. Solid mode drops it. */
+[data-solid="true"] .ambient-glow,
+[data-solid="true"] [data-ambient-glow] {
+  opacity: 0 !important;
+}

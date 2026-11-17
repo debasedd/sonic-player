@@ -1,0 +1,51 @@
+[package]
+name = "sonic"
+version = "0.1.0"
+description = "Sonic - a Liquid Glass Spotify mini player for Windows"
+authors = ["Sonic"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "sonic_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.4", features = [] }
+
+[dependencies]
+tauri = { version = "2.12.5", features = ["tray-icon", "image-png"] }
+windows = { version = "=0.58.0", features = ["Media_Control", "Storage_Streams", "Win32_System_WinRT"] }
+tauri-plugin-opener = "2.7.3"
+tauri-plugin-single-instance = "2.5.5"
+# Native OLE drag-out: Explorer and other apps receive real files. The `drag`
+# crate wraps IDropSource/IDataObject on Windows. A JS drag event or a download
+# link is not a substitute for this.
+drag = "2.1.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+ureq = { version = "3.5.2", features = ["json"] }
+sha2 = "0.11.1"
+base64 = "0.23.1"
+rand = "0.9.5"
+winreg = "0.56.0"
+# Runtime-generated drag ghost for native drag-out (no binary asset shipped).
+image = { version = "0.25", default-features = false, features = ["png"] }
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Security_Credentials",
+    "Win32_Security_Cryptography",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Media",
+] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+dist-ssr/
+
+# Tauri / Rust
+src-tauri/target/
+src-tauri/gen/
+
+# Local secrets — never commit a client id, token, or key
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.p12
+
+# Local app data, if someone points the app at the repo while testing
+shelf/
+shelf.json
+clipboard/
+geometry.json
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Rust
+**/*.rs.bk
