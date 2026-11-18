@@ -22,6 +22,8 @@ use std::ffi::c_void;
 const CF_UNICODETEXT: u32 = 13;
 const CF_DIB: u32 = 8;
 const GMEM_MOVEABLE: u32 = 0x0002;
+/// Bound how much untrusted clipboard text is scanned before truncation.
+const MAX_TEXT_READ_UNITS: usize = 64 * 1024;
 
 /// Current clipboard sequence number, or `None` if the clipboard is locked.
 pub fn sequence_number() -> Option<u32> {
@@ -55,20 +57,42 @@ unsafe fn read_text_locked() -> Option<String> {
         return None;
     }
 
+    let allocation_size = windows_sys::Win32::System::Memory::GlobalSize(handle);
+    let available_units = allocation_size / std::mem::size_of::<u16>();
+    if available_units == 0 {
+        return None;
+    }
+
     let pointer = windows_sys::Win32::System::Memory::GlobalLock(handle) as *const u16;
     if pointer.is_null() {
         return None;
     }
 
+    // Clipboard text is supplied by other processes. Never scan past the
+    // allocation, and cap the work even if a process supplies an enormous block.
+    let scan_limit = available_units.min(MAX_TEXT_READ_UNITS + 1);
     let mut length = 0usize;
-    while *pointer.add(length) != 0 {
+    while length < scan_limit && *pointer.add(length) != 0 {
         length += 1;
     }
 
-    let slice = std::slice::from_raw_parts(pointer, length);
-    let text = String::from_utf16_lossy(slice);
+    // A CF_UNICODETEXT block must contain a terminator within its allocation.
+    // If it is longer than our scan limit, keep only the bounded prefix.
+    if length == available_units {
+        windows_sys::Win32::System::Memory::GlobalUnlock(handle);
+        return None;
+    }
+
+    let truncated = length > MAX_TEXT_READ_UNITS;
+    let captured_len = length.min(MAX_TEXT_READ_UNITS);
+    let slice = std::slice::from_raw_parts(pointer, captured_len);
+    let mut text = String::from_utf16_lossy(slice);
 
     windows_sys::Win32::System::Memory::GlobalUnlock(handle);
+
+    if truncated {
+        text.push_str("\n… (truncated)");
+    }
     Some(text)
 }
 
@@ -83,7 +107,12 @@ struct DibHeader {
     compression: u32,
 }
 
-unsafe fn read_dib_header(handle: *mut c_void) -> Option<DibHeader> {
+unsafe fn read_dib_header(handle: *mut c_void, allocation_size: usize) -> Option<DibHeader> {
+    const BITMAPINFOHEADER_SIZE: usize = 40;
+    if allocation_size < BITMAPINFOHEADER_SIZE {
+        return None;
+    }
+
     let pointer = windows_sys::Win32::System::Memory::GlobalLock(handle) as *const u8;
     if pointer.is_null() {
         return None;
@@ -91,6 +120,8 @@ unsafe fn read_dib_header(handle: *mut c_void) -> Option<DibHeader> {
 
     // BITMAPINFOHEADER: biSize(4) biWidth(4) biHeight(4) biPlanes(2) biBitCount(2)
     // biCompression(4) ...
+    let header_size =
+        u32::from_ne_bytes([*pointer, *pointer.add(1), *pointer.add(2), *pointer.add(3)]);
     let header = DibHeader {
         width: i32::from_ne_bytes([
             *pointer.add(4),
@@ -112,10 +143,18 @@ unsafe fn read_dib_header(handle: *mut c_void) -> Option<DibHeader> {
             *pointer.add(19),
         ]),
     };
+    let planes = u16::from_ne_bytes([*pointer.add(12), *pointer.add(13)]);
 
     windows_sys::Win32::System::Memory::GlobalUnlock(handle);
 
-    if header.width <= 0 || header.height == 0 || header.bit_count != 32 {
+    // This decoder only understands a 40-byte BITMAPINFOHEADER. Reject other
+    // DIB header variants rather than guessing the pixel offset or layout.
+    if header_size != BITMAPINFOHEADER_SIZE as u32
+        || planes != 1
+        || header.width <= 0
+        || header.height == 0
+        || header.bit_count != 32
+    {
         return None;
     }
     // BI_RGB only: BI_BITFIELDS and RLE would need per-format decoding.
@@ -148,7 +187,8 @@ unsafe fn read_image_locked() -> Option<(Vec<u8>, u32, u32)> {
         return None;
     }
 
-    let header = read_dib_header(handle)?;
+    let allocation_size = windows_sys::Win32::System::Memory::GlobalSize(handle);
+    let header = read_dib_header(handle, allocation_size)?;
 
     let width = header.width as u32;
     // Negative height = top-down rows; positive = bottom-up.
@@ -159,13 +199,20 @@ unsafe fn read_image_locked() -> Option<(Vec<u8>, u32, u32)> {
         return None;
     }
 
+    let pixel_bytes = (width as usize)
+        .checked_mul(height as usize)?
+        .checked_mul(4)?;
+    let required_size = 40usize.checked_add(pixel_bytes)?;
+    if allocation_size < required_size {
+        return None;
+    }
+
     let pointer = windows_sys::Win32::System::Memory::GlobalLock(handle) as *const u8;
     if pointer.is_null() {
         return None;
     }
 
-    let pixel_count = width as usize * height as usize;
-    let mut bgra = vec![0u8; pixel_count * 4];
+    let mut bgra = vec![0u8; pixel_bytes];
     std::ptr::copy_nonoverlapping(pointer.add(40), bgra.as_mut_ptr(), bgra.len());
     windows_sys::Win32::System::Memory::GlobalUnlock(handle);
 

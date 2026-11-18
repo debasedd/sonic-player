@@ -200,19 +200,9 @@ fn handle_redirect_once(mut stream: TcpStream, expected_state: &str) -> AppResul
     let query = target.split_once('?').map(|(_, q)| q).unwrap_or("");
     let params = parse_query(query);
 
-    // --- Spotify reported an error on the consent screen -------------------
-    if let Some(error) = params.get("error") {
-        let description = params
-            .get("error_description")
-            .cloned()
-            .unwrap_or_else(|| error.clone());
-        write_html(&mut stream, 400, "Authorization failed", &description)?;
-        return Err(AppError::Local(format!(
-            "Spotify authorization failed: {description}"
-        )));
-    }
-
     // --- CSRF check --------------------------------------------------------
+    // Spotify includes state on both success and error redirects. Reject
+    // unsolicited callbacks before displaying any callback-provided text.
     match params.get("state") {
         Some(returned) if returned == expected_state => {}
         Some(_) => {
@@ -237,6 +227,18 @@ fn handle_redirect_once(mut stream: TcpStream, expected_state: &str) -> AppResul
                 "Spotify sign-in response was missing its state value.".into(),
             ));
         }
+    }
+
+    // --- Spotify reported an error on the consent screen -------------------
+    if let Some(error) = params.get("error") {
+        let description = params
+            .get("error_description")
+            .cloned()
+            .unwrap_or_else(|| error.clone());
+        write_html(&mut stream, 400, "Authorization failed", &description)?;
+        return Err(AppError::Local(format!(
+            "Spotify authorization failed: {description}"
+        )));
     }
 
     let Some(code) = params.get("code") else {
@@ -264,6 +266,8 @@ fn handle_redirect_once(mut stream: TcpStream, expected_state: &str) -> AppResul
 /// Minimal HTML page shown in the browser after the redirect lands.
 fn write_html(stream: &mut TcpStream, status: u16, title: &str, detail: &str) -> AppResult<()> {
     let reason = if status == 200 { "OK" } else { "Bad Request" };
+    let title = escape_html(title);
+    let detail = escape_html(detail);
     let body = format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><title>{title}</title>\
 <style>body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0b0f;\
@@ -285,6 +289,35 @@ p{{margin:0;color:#a1a1aa}}</style></head>\
         .map_err(|e| AppError::Local(format!("could not answer browser: {e}")))?;
     let _ = stream.flush();
     Ok(())
+}
+
+/// Escapes dynamic text for insertion into an HTML text node.
+fn escape_html(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for character in text.chars() {
+        match character {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#39;"),
+            _ => escaped.push(character),
+        }
+    }
+    escaped
+}
+
+#[cfg(test)]
+mod tests {
+    use super::escape_html;
+
+    #[test]
+    fn escapes_html_text_and_attribute_delimiters() {
+        assert_eq!(
+            escape_html("<script>alert(\"x\")</script>&'"),
+            "&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;&amp;&#39;"
+        );
+    }
 }
 
 /// Exchanges an authorization code for tokens.

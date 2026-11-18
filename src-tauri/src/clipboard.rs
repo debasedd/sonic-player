@@ -380,6 +380,12 @@ pub fn looks_sensitive(text: &str) -> bool {
         return true;
     }
 
+    // Common payment-card formats use digits separated by spaces or hyphens.
+    // Luhn validation avoids suppressing arbitrary long IDs or phone numbers.
+    if contains_luhn_card_number(trimmed) {
+        return true;
+    }
+
     // PEM private key blocks.
     if trimmed.contains("-----BEGIN ") && trimmed.contains("PRIVATE KEY----") {
         return true;
@@ -421,6 +427,41 @@ pub fn looks_sensitive(text: &str) -> bool {
         }
     }
 
+    false
+}
+
+fn contains_luhn_card_number(text: &str) -> bool {
+    for run in text.split(|character: char| {
+        !(character.is_ascii_digit() || character.is_ascii_whitespace() || character == '-')
+    }) {
+        let digits: Vec<u8> = run
+            .bytes()
+            .filter(u8::is_ascii_digit)
+            .map(|byte| byte - b'0')
+            .collect();
+        if !(13..=19).contains(&digits.len()) {
+            continue;
+        }
+
+        let sum: u32 = digits
+            .iter()
+            .rev()
+            .enumerate()
+            .map(|(index, digit)| {
+                let mut value = u32::from(*digit);
+                if index % 2 == 1 {
+                    value *= 2;
+                    if value > 9 {
+                        value -= 9;
+                    }
+                }
+                value
+            })
+            .sum();
+        if sum % 10 == 0 {
+            return true;
+        }
+    }
     false
 }
 
@@ -487,6 +528,19 @@ mod tests {
         assert!(!looks_sensitive(
             "the password field is on the settings page"
         ));
+    }
+
+    #[test]
+    fn luhn_valid_card_numbers_are_skipped_in_common_formats() {
+        assert!(looks_sensitive("4111111111111111"));
+        assert!(looks_sensitive("Card: 4111 1111 1111 1111"));
+        assert!(looks_sensitive("Card: 4111-1111-1111-1111"));
+    }
+
+    #[test]
+    fn card_filter_does_not_skip_invalid_or_unrelated_long_numbers() {
+        assert!(!looks_sensitive("4111 1111 1111 1112"));
+        assert!(!looks_sensitive("Order 4815162342"));
     }
 
     #[test]
