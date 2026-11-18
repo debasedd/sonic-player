@@ -59,15 +59,22 @@ Two control paths, in priority order:
 
 ---
 
-## Requirements
+## Download and install (Windows)
 
-- Windows 10 (1809+) or Windows 11
-- [Rust 1.77+](https://rustup.rs/) (MSVC toolchain)
-- [Node.js 18+](https://nodejs.org/)
-- Visual Studio Build Tools 2022 with the Windows 11 SDK — required for the MSVC
-  linker on a fresh machine
-- [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) —
-  present on Windows 11 and on updated Windows 10
+Download the latest ready-to-install version from
+[GitHub Releases](https://github.com/debasedd/sonic-player/releases/latest), then
+run the `.exe` installer. You do not need Node.js, Rust, Visual Studio Build Tools,
+or to build the app yourself.
+
+Sonic requires Windows 10 (1809+) or Windows 11 and the
+[WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/),
+which is included with Windows 11 and present on updated Windows 10 systems.
+
+## Development and building
+
+To build from source, install [Rust 1.77+](https://rustup.rs/) (MSVC toolchain),
+[Node.js 18+](https://nodejs.org/), and Visual Studio Build Tools 2022 with the
+Windows 11 SDK.
 
 ---
 
