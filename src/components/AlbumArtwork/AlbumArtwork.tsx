@@ -180,9 +180,9 @@ export function AlbumArtwork({
               initial={{ opacity: 0, scale: 1.015 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.995 }}
-              transition={{ ...T_TRACK, duration: reduced ? 0 : 0.32 }}
+              transition={reduced ? { duration: 0 } : T_TRACK}
               className="absolute inset-0 h-full w-full object-cover"
-              style={{ borderRadius: radius }}
+              style={{ borderRadius: radius, willChange: "opacity, transform" }}
             />
           )}
         </AnimatePresence>

@@ -12,6 +12,9 @@ import type { Transition } from "framer-motion";
 /** The house easing curve. */
 export const EASE_GLASS = [0.42, 0, 0.58, 1] as const;
 
+/** Responsive start with a soft landing, used for track metadata changes. */
+export const EASE_TRACK = [0.22, 1, 0.36, 1] as const;
+
 /** Hover / small state changes: 150-200ms. */
 export const T_HOVER: Transition = { duration: 0.18, ease: EASE_GLASS };
 
@@ -21,8 +24,8 @@ export const T_TAP: Transition = { duration: 0.14, ease: EASE_GLASS };
 /** Popovers and small panels: 180-250ms. */
 export const T_POPOVER: Transition = { duration: 0.22, ease: EASE_GLASS };
 
-/** Track change: 350-500ms. */
-export const T_TRACK: Transition = { duration: 0.42, ease: EASE_GLASS };
+/** Track change: a calm crossfade with a soft, responsive landing. */
+export const T_TRACK: Transition = { duration: 0.48, ease: EASE_TRACK };
 
 /**
  * Time-normalized underdamped spring from the reference island.

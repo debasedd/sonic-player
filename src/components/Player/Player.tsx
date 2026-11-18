@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ChevronDown,
@@ -23,7 +23,8 @@ import { ConnectionStatus } from "../ConnectionStatus/ConnectionStatus";
 import { Equalizer } from "../Equalizer/Equalizer";
 import { GlassSurface } from "../GlassSurface/GlassSurface";
 import { useAlbumColors } from "../../hooks/useAlbumColors";
-import { T_TRACK, T_LAYOUT } from "../../lib/motion";
+import { useReducedMotion } from "../../hooks/useReducedMotion";
+import { EASE_TRACK, T_LAYOUT } from "../../lib/motion";
 
 interface PlayerProps {
   mode: WindowMode;
@@ -74,6 +75,34 @@ function useAmbientGlow(artworkUrl: string | undefined) {
   return palette;
 }
 
+/** Crossfades only the changed label while keeping its line box steady. */
+function AnimatedTrackText({
+  text,
+  className,
+}: {
+  text: string;
+  className?: string;
+}) {
+  const reduced = useReducedMotion();
+  return (
+    <span className={cn("relative grid min-w-0 grid-cols-[minmax(0,1fr)]", className)}>
+      <AnimatePresence initial={false} mode="popLayout">
+        <motion.span
+          key={text}
+          initial={reduced ? false : { opacity: 0, y: 3 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: reduced ? 0 : -2 }}
+          transition={{ duration: reduced ? 0 : 0.34, ease: EASE_TRACK }}
+          className="clamp-1 min-w-0"
+          style={{ gridArea: "1 / 1" }}
+        >
+          {text}
+        </motion.span>
+      </AnimatePresence>
+    </span>
+  );
+}
+
 export function PillPlayer({ mode }: PlayerProps) {
   return mode === "mini" ? <MiniPlayer /> : <FullPill />;
 }
@@ -98,26 +127,8 @@ function FullPill() {
   // which is pure waste when the result is never painted.
   const palette = useAmbientGlow(solid ? undefined : currentArtwork);
 
-  // Track-change pulse follows Spotify IDs or the local session's title/artist.
-  const [pulse, setPulse] = useState(0);
-  const trackKey = item?.id ?? (localMediaTitle ? `${localMediaArtist ?? ""}:${localMediaTitle}` : undefined);
-  const lastTrack = useRef<string | undefined>(trackKey);
-
-  useEffect(() => {
-    if (trackKey && trackKey !== lastTrack.current) {
-      lastTrack.current = trackKey;
-      setPulse((n) => n + 1);
-    } else if (!trackKey) {
-      lastTrack.current = undefined;
-    }
-  }, [trackKey]);
-
   return (
-    <motion.div
-      key={pulse}
-      initial={{ scale: 0.985 }}
-      animate={{ scale: 1 }}
-      transition={T_TRACK}
+    <div
       className="h-full w-full"
       style={{ borderRadius: "var(--shell-radius, 28px)" }}
     >
@@ -172,7 +183,7 @@ function FullPill() {
                   layoutId="track-title"
                   className="clamp-1 text-[12px] font-semibold leading-tight tracking-[-0.01em] text-white"
                 >
-                  {item?.name ?? localMediaTitle ?? "Nothing playing"}
+                  <AnimatedTrackText text={item?.name ?? localMediaTitle ?? "Nothing playing"} />
                 </motion.p>
                 {/* Decorative only: Spotify exposes no frequency data. It reflects
                     playback status, nothing more. */}
@@ -187,7 +198,7 @@ function FullPill() {
                 layoutId="track-artist"
                 className="clamp-1 text-[10px] font-medium leading-tight text-ink-muted"
               >
-                {item ? joinArtists(item.artists) : localMediaArtist ?? "Pick something in Spotify"}
+                <AnimatedTrackText text={item ? joinArtists(item.artists) : localMediaArtist ?? "Pick something in Spotify"} />
               </motion.p>
 
               <div className="mt-auto">
@@ -232,7 +243,7 @@ function FullPill() {
           </>
         )}
       </GlassSurface>
-    </motion.div>
+    </div>
   );
 }
 
@@ -312,14 +323,14 @@ function MiniPlayer() {
               layoutId="track-title"
               className="clamp-1 text-[12px] font-semibold leading-tight text-white"
             >
-              {item?.name ?? localMediaTitle ?? "Nothing playing"}
+              <AnimatedTrackText text={item?.name ?? localMediaTitle ?? "Nothing playing"} />
             </motion.p>
             <motion.p
               layout="position"
               layoutId="track-artist"
               className="clamp-1 text-[10px] font-medium leading-tight text-ink-faint"
             >
-              {item ? joinArtists(item.artists) : localMediaArtist ?? "Spotify"}
+              <AnimatedTrackText text={item ? joinArtists(item.artists) : localMediaArtist ?? "Spotify"} />
             </motion.p>
           </div>
 
@@ -430,25 +441,15 @@ export function ExpandedPlayer() {
 
           {/* Artwork — crossfades on track change, tilts under the pointer. */}
           <div className="flex justify-center px-4 pb-4 pt-1">
-            <AnimatePresence mode="popLayout" initial={false}>
-              <motion.div
-                key={item?.artworkUrl ?? "empty"}
-                initial={{ opacity: 0, scale: 0.955 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.985 }}
-                transition={T_TRACK}
-              >
-                <AlbumArtwork
-                  src={currentArtwork}
-                  alt={item?.album ? `${item.album} artwork` : "Album artwork"}
-                  size={252}
-                  radius={18}
-                  tilt
-                  glow={palette?.base}
-                  solid={solid}
-                />
-              </motion.div>
-            </AnimatePresence>
+            <AlbumArtwork
+              src={currentArtwork}
+              alt={item?.album ? `${item.album} artwork` : "Album artwork"}
+              size={252}
+              radius={18}
+              tilt
+              glow={palette?.base}
+              solid={solid}
+            />
           </div>
 
           {/* Identity */}
@@ -456,10 +457,10 @@ export function ExpandedPlayer() {
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <h2 className="clamp-1 text-[15.5px] font-semibold leading-snug tracking-[-0.01em] text-white">
-                  {item?.name ?? localMediaTitle ?? "Nothing playing"}
+                  <AnimatedTrackText text={item?.name ?? localMediaTitle ?? "Nothing playing"} />
                 </h2>
                 <p className="clamp-1 mt-0.5 text-[11.5px] font-medium text-ink-muted">
-                  {item ? joinArtists(item.artists) : localMediaArtist ?? "Choose something in Spotify"}
+                  <AnimatedTrackText text={item ? joinArtists(item.artists) : localMediaArtist ?? "Choose something in Spotify"} />
                 </p>
               </div>
               <Equalizer
