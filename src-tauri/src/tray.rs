@@ -4,7 +4,6 @@
 //! carries the transport controls as well as Show/Hide/Settings/Quit.
 
 use crate::config::WindowMode;
-use crate::player::EVENT_STATE;
 use crate::spotify::SpotifyClient;
 use crate::state::AppState;
 use crate::window::MAIN_LABEL;
@@ -181,10 +180,7 @@ fn next_track<R: Runtime>(app: &tauri::AppHandle<R>) {
 /// Convenience used by the command layer: push state after a change.
 pub fn push_state<R: Runtime>(app: &tauri::AppHandle<R>) {
     let state = app.state::<AppState>();
-    let snapshot = state.ui_state();
-    if let Err(err) = app.emit(EVENT_STATE, &snapshot) {
-        eprintln!("Sonic: emit failed: {err}");
-    }
+    crate::commands::push_state(app, &state);
 }
 
 /// Applies the window mode and updates the tray tooltip.

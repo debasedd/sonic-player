@@ -212,29 +212,24 @@ unsafe fn read_image_locked() -> Option<(Vec<u8>, u32, u32)> {
         return None;
     }
 
-    let mut bgra = vec![0u8; pixel_bytes];
-    std::ptr::copy_nonoverlapping(pointer.add(40), bgra.as_mut_ptr(), bgra.len());
+    let mut rgba = vec![0u8; pixel_bytes];
+    std::ptr::copy_nonoverlapping(pointer.add(40), rgba.as_mut_ptr(), rgba.len());
     windows_sys::Win32::System::Memory::GlobalUnlock(handle);
 
-    // BGRA -> RGBA.
-    let mut rgba = Vec::with_capacity(bgra.len());
-    for pixel in bgra.chunks_exact(4) {
-        rgba.push(pixel[2]);
-        rgba.push(pixel[1]);
-        rgba.push(pixel[0]);
-        rgba.push(pixel[3]);
+    // BGRA -> RGBA in place, avoiding a second full-size pixel buffer.
+    for pixel in rgba.chunks_exact_mut(4) {
+        pixel.swap(0, 2);
     }
 
     // Bottom-up DIBs arrive flipped; normalise to top-down so the PNG is upright.
     if !top_down {
         let stride = width as usize * 4;
-        let mut flipped = vec![0u8; rgba.len()];
-        for row in 0..height as usize {
-            let source = (height as usize - 1 - row) * stride;
-            flipped[row * stride..(row + 1) * stride]
-                .copy_from_slice(&rgba[source..source + stride]);
+        for row in 0..height as usize / 2 {
+            let top = row * stride;
+            let bottom = (height as usize - 1 - row) * stride;
+            let (before_bottom, after_bottom) = rgba.split_at_mut(bottom);
+            before_bottom[top..top + stride].swap_with_slice(&mut after_bottom[..stride]);
         }
-        rgba = flipped;
     }
 
     Some((rgba, width, height))
@@ -475,7 +470,7 @@ pub fn capture_once(state: &AppState) -> Option<crate::clipboard::ClipboardEntry
 
     // Image second.
     if let Some((rgba, width, height)) = read_image_rgba() {
-        let stored = vault.store_image(&rgba, width, height).ok()?;
+        let stored = vault.store_image(rgba, width, height).ok()?;
         let entry = vault
             .push(crate::clipboard::ClipboardKind::Image, None, Some(stored))
             .ok()?;

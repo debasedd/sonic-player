@@ -17,10 +17,10 @@ import type {
 /**
  * Player state.
  *
- * The backend is authoritative: it pushes a full `UiState` snapshot after every
- * poll and after every command, and we simply adopt it. Local state exists only
- * to make controls feel instant (optimistic flips, drag preview) and is always
- * corrected by the next snapshot.
+ * The backend is authoritative: it pushes a complete state snapshot after every
+ * poll and command, omitting unchanged local cover art by revision. Local state
+ * exists only for brief optimistic flips and drag previews, corrected by the next
+ * snapshot.
  */
 
 export type Panel = "none" | "settings" | "pocket";
@@ -201,6 +201,11 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
       // `get_bootstrap` returns both the state and the platform facts.
       const bootstrap = await api.bootstrap();
       get().applyState(bootstrap.state);
+      if (bootstrap.state.localMediaArtworkRevision !== undefined) {
+        void api
+          .ackLocalMediaArtworkRevision(bootstrap.state.localMediaArtworkRevision)
+          .catch(() => {});
+      }
       set({ hydrated: true });
     } catch (err) {
       // A failure here means the webview lost its bridge, which is fatal for a
@@ -219,10 +224,29 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
     }
   },
 
-  /** Adopt a backend snapshot wholesale. */
-  applyState: (next) =>
+  /** Adopt a backend snapshot, retaining cover art omitted from unchanged events. */
+  applyState: (next) => {
+    const current = get();
+    const previousRevision = current.state?.localMediaArtworkRevision ?? -1;
+    const incomingRevision = next.localMediaArtworkRevision ?? previousRevision;
+    const staleArtworkEvent = incomingRevision < previousRevision;
+    const artworkRevision = staleArtworkEvent
+      ? previousRevision
+      : incomingRevision;
+    const artwork = staleArtworkEvent
+      ? current.localMediaArtworkDataUrl
+      : next.localMediaArtworkDataUrl !== undefined
+        ? next.localMediaArtworkDataUrl
+        : incomingRevision !== previousRevision
+          ? null
+          : current.localMediaArtworkDataUrl;
+    const snapshot: UiState = {
+      ...next,
+      localMediaArtworkDataUrl: artwork,
+      localMediaArtworkRevision: Math.max(0, artworkRevision),
+    };
     set({
-      state: next,
+      state: snapshot,
       connected: next.connected,
       authenticating: next.authenticating,
       playback: next.playback,
@@ -234,7 +258,7 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
       localMediaPlaying: next.localMediaPlaying ?? false,
       localMediaTitle: next.localMediaTitle ?? null,
       localMediaArtist: next.localMediaArtist ?? null,
-      localMediaArtworkDataUrl: next.localMediaArtworkDataUrl ?? null,
+      localMediaArtworkDataUrl: artwork,
       localMediaPositionMs: next.localMediaPositionMs ?? null,
       localMediaDurationMs: next.localMediaDurationMs ?? null,
       localMediaShuffle: next.localMediaShuffle ?? null,
@@ -258,7 +282,8 @@ export const usePlayer = create<PlayerStore>((set, get) => ({
       // Any fresh snapshot resolves a pending optimistic flip.
       optimisticPlaying: null,
       pendingVolume: null,
-    }),
+    });
+  },
 
   /**
    * Claims the pointer for a drag or a popover.

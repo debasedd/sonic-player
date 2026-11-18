@@ -186,7 +186,9 @@ export interface UiState {
   localMediaPlaying: boolean;
   localMediaTitle: string | null;
   localMediaArtist: string | null;
-  localMediaArtworkDataUrl: string | null;
+  /** Omitted on routine events when the artwork revision has not changed. */
+  localMediaArtworkDataUrl?: string | null;
+  localMediaArtworkRevision?: number;
   /** Local timeline, so the bar and time labels work without Spotify. */
   localMediaPositionMs: number | null;
   localMediaDurationMs: number | null;

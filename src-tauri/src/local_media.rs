@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Capability flags mirrored from the GSMTC session so the UI can disable
@@ -22,7 +23,7 @@ pub struct LocalPlaybackState {
     pub is_playing: bool,
     pub title: Option<String>,
     pub artist: Option<String>,
-    pub artwork_data_url: Option<String>,
+    pub artwork_data_url: Option<Arc<str>>,
     /// Track position in milliseconds, when the session exposes a timeline.
     pub position_ms: Option<u64>,
     /// Track length in milliseconds, when the session exposes a timeline.
@@ -176,7 +177,7 @@ fn snapshot_with_manager(
 #[cfg(windows)]
 fn read_thumbnail(
     properties: &windows::Media::Control::GlobalSystemMediaTransportControlsSessionMediaProperties,
-) -> Option<String> {
+) -> Option<Arc<str>> {
     let stream = properties
         .Thumbnail()
         .ok()?
@@ -197,7 +198,7 @@ fn read_thumbnail(
     artwork_data_url(&content_type, &bytes)
 }
 
-fn artwork_data_url(content_type: &str, bytes: &[u8]) -> Option<String> {
+fn artwork_data_url(content_type: &str, bytes: &[u8]) -> Option<Arc<str>> {
     if bytes.is_empty() || bytes.len() > 5_000_000 {
         return None;
     }
@@ -206,10 +207,13 @@ fn artwork_data_url(content_type: &str, bytes: &[u8]) -> Option<String> {
         _ => return None,
     };
     use base64::Engine;
-    Some(format!(
-        "data:{mime};base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(bytes)
-    ))
+    Some(
+        format!(
+            "data:{mime};base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(bytes)
+        )
+        .into(),
+    )
 }
 
 fn nonempty(value: String) -> Option<String> {

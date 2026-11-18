@@ -1,14 +1,15 @@
 import { useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { api } from "../services/spotify/api";
 import { usePlayer } from "../store/playerStore";
 import { EVENTS, type UiState } from "../types/spotify";
 
 /**
  * Bridges backend events into the store.
  *
- * The Rust side is authoritative: it emits a full `UiState` after every poll and
- * after every command. We never compute playback state here — we only render
- * what we were told, plus short-lived optimistic overrides.
+ * The Rust side is authoritative: it emits a state snapshot after every poll and
+ * command, omitting unchanged cover art by revision. We never compute playback
+ * state here — we render what we were told, plus short-lived optimistic overrides.
  */
 export function useSonicEvents() {
   const applyState = usePlayer((s) => s.applyState);
@@ -28,7 +29,17 @@ export function useSonicEvents() {
       try {
         const unState = await listen<UiState>(EVENTS.state, (event) => {
           if (cancelled) return;
+          const previousArtworkRevision =
+            usePlayer.getState().state?.localMediaArtworkRevision;
           applyState(event.payload);
+          const artworkRevision = event.payload.localMediaArtworkRevision;
+          if (
+            artworkRevision !== undefined &&
+            (artworkRevision !== previousArtworkRevision ||
+              event.payload.localMediaArtworkDataUrl !== undefined)
+          ) {
+            void api.ackLocalMediaArtworkRevision(artworkRevision).catch(() => {});
+          }
 
           // A capture happened while Pocket is open: re-read the vault list.
           // Only the list is refreshed, and only when the revision actually

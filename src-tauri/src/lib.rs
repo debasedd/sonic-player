@@ -84,6 +84,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_bootstrap,
+            commands::ack_local_media_artwork_revision,
             commands::start_login,
             commands::cancel_login,
             commands::logout,

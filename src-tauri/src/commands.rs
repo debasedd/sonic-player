@@ -43,8 +43,9 @@ pub struct Bootstrap {
 }
 
 /// Pushes a state snapshot to the frontend.
-fn emit_state<R: tauri::Runtime>(app: &tauri::AppHandle<R>, state: &UiState) {
-    if let Err(err) = app.emit(EVENT_STATE, state) {
+fn emit_state<R: tauri::Runtime>(app: &tauri::AppHandle<R>, state: &crate::state::AppState) {
+    let snapshot = state.ui_state_for_event();
+    if let Err(err) = app.emit(EVENT_STATE, &snapshot) {
         eprintln!("Sonic: emit failed: {err}");
     }
 }
@@ -55,8 +56,7 @@ fn emit_state<R: tauri::Runtime>(app: &tauri::AppHandle<R>, state: &UiState) {
 /// building their own emitter. One emitter means one event name, one payload
 /// shape, and one place to fix if the snapshot contract ever changes.
 pub fn push_state<R: tauri::Runtime>(app: &tauri::AppHandle<R>, state: &crate::state::AppState) {
-    let snapshot = state.ui_state();
-    emit_state(app, &snapshot);
+    emit_state(app, state);
 }
 
 /// Kept as a private alias so the ~20 existing call sites read the same.
@@ -112,6 +112,13 @@ pub fn get_bootstrap(app: AppHandle) -> Bootstrap {
     }
 }
 
+/// Records that the webview received and adopted a local cover-art revision.
+#[tauri::command]
+pub fn ack_local_media_artwork_revision(app: AppHandle, revision: u64) {
+    app.state::<crate::state::AppState>()
+        .acknowledge_local_media_artwork(revision);
+}
+
 /// Begins an interactive Spotify sign-in.
 ///
 /// Returns immediately; progress arrives as state events on the `sonic://state`
@@ -160,8 +167,7 @@ pub fn start_login(app: AppHandle) -> AppResult<()> {
 
         login_state.set_authenticating(false);
         login_state.set_pending_login(None);
-        let snapshot = login_state.ui_state();
-        emit_state(&worker_app, &snapshot);
+        emit_state(&worker_app, &login_state);
     });
 
     Ok(())

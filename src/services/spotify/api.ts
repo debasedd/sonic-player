@@ -18,6 +18,8 @@ import type {
  */
 export const api = {
   bootstrap: () => invoke<Bootstrap>("get_bootstrap"),
+  ackLocalMediaArtworkRevision: (revision: number) =>
+    invoke<void>("ack_local_media_artwork_revision", { revision }),
 
   startLogin: () => invoke<void>("start_login"),
   cancelLogin: () => invoke<void>("cancel_login"),

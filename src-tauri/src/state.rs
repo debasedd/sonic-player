@@ -6,6 +6,7 @@
 use crate::config::{self, Geometry, Settings, WindowMode};
 use crate::error::AppError;
 use crate::spotify::{Device, Item, Playback, SpotifyClient};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 /// Snapshot handed to the frontend on connect and after every poll.
@@ -38,7 +39,9 @@ pub struct UiState {
     /// Local Windows media session title, artist, and embedded cover art.
     pub local_media_title: Option<String>,
     pub local_media_artist: Option<String>,
-    pub local_media_artwork_data_url: Option<String>,
+    pub local_media_artwork_revision: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_media_artwork_data_url: Option<Arc<str>>,
     /// Local timeline position and duration in milliseconds, when published.
     pub local_media_position_ms: Option<u64>,
     pub local_media_duration_ms: Option<u64>,
@@ -196,6 +199,8 @@ struct Inner {
     last_error: Mutex<Option<AppError>>,
     ready: Mutex<bool>,
     local_media: Mutex<crate::local_media::LocalPlaybackState>,
+    local_media_artwork_revision: AtomicU64,
+    last_acknowledged_local_media_artwork_revision: Mutex<Option<u64>>,
     account: Mutex<AccountInfo>,
     /// Transient pointer-hover state. Never persisted, never survives a restart.
     hover_expand: Mutex<bool>,
@@ -258,6 +263,8 @@ impl AppState {
                 last_error: Mutex::new(None),
                 ready: Mutex::new(false),
                 local_media: Mutex::new(crate::local_media::LocalPlaybackState::default()),
+                local_media_artwork_revision: AtomicU64::new(0),
+                last_acknowledged_local_media_artwork_revision: Mutex::new(None),
                 hover_expand: Mutex::new(false),
                 pointer_claimed: Mutex::new(false),
                 settings_open: Mutex::new(false),
@@ -446,7 +453,13 @@ impl AppState {
     }
 
     pub fn set_local_media(&self, local_media: crate::local_media::LocalPlaybackState) {
-        *self.inner.local_media.lock().expect("local media poisoned") = local_media;
+        let mut current = self.inner.local_media.lock().expect("local media poisoned");
+        if current.artwork_data_url != local_media.artwork_data_url {
+            self.inner
+                .local_media_artwork_revision
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        *current = local_media;
     }
 
     // -- account -------------------------------------------------------------
@@ -481,7 +494,14 @@ impl AppState {
     pub fn ui_state(&self) -> UiState {
         let settings = self.settings();
         let cache = self.cache();
-        let local_media = self.local_media();
+        let (local_media, local_media_artwork_revision) = {
+            let local_media = self.inner.local_media.lock().expect("local media poisoned");
+            let revision = self
+                .inner
+                .local_media_artwork_revision
+                .load(Ordering::Relaxed);
+            (local_media.clone(), revision)
+        };
         let (name, avatar, is_premium) = self.account();
         let error = self.last_error();
         let pocket = self.pocket_stats();
@@ -514,6 +534,7 @@ impl AppState {
             local_media_playing: local_media.is_playing,
             local_media_title: local_media.title,
             local_media_artist: local_media.artist,
+            local_media_artwork_revision,
             local_media_artwork_data_url: local_media.artwork_data_url,
             local_media_position_ms: local_media.position_ms,
             local_media_duration_ms: local_media.duration_ms,
@@ -523,6 +544,42 @@ impl AppState {
             hover_expand: self.is_hover_expand(),
             hover_mini: self.is_hover_mini(),
             effective_mode: self.effective_mode(),
+        }
+    }
+
+    /// Event snapshots omit cover art already acknowledged at the current revision.
+    /// Bootstrap snapshots stay complete; the frontend merges omitted artwork
+    /// by revision so routine playback polls do not resend a large data URL.
+    pub fn ui_state_for_event(&self) -> UiState {
+        let mut snapshot = self.ui_state();
+        let last = self
+            .inner
+            .last_acknowledged_local_media_artwork_revision
+            .lock()
+            .expect("artwork revision poisoned");
+        if *last == Some(snapshot.local_media_artwork_revision) {
+            snapshot.local_media_artwork_data_url = None;
+        }
+        snapshot
+    }
+
+    /// Acknowledge cover art after the frontend has received and adopted it.
+    pub fn acknowledge_local_media_artwork(&self, revision: u64) {
+        if revision
+            > self
+                .inner
+                .local_media_artwork_revision
+                .load(Ordering::Relaxed)
+        {
+            return;
+        }
+        let mut last = self
+            .inner
+            .last_acknowledged_local_media_artwork_revision
+            .lock()
+            .expect("artwork revision poisoned");
+        if last.as_ref().map_or(true, |previous| revision > *previous) {
+            *last = Some(revision);
         }
     }
 

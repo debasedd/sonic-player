@@ -143,7 +143,7 @@ pub fn refresh_account(client: &SpotifyClient, state: &AppState) {
 /// the webview has to hear about it immediately — waiting for the next poll would
 /// draw a mini layout inside a pill-sized window for up to a second.
 pub fn emit_state<R: tauri::Runtime>(app: &tauri::AppHandle<R>, state: &AppState) {
-    let snapshot = state.ui_state();
+    let snapshot = state.ui_state_for_event();
     if let Err(err) = app.emit(EVENT_STATE, &snapshot) {
         // A missing window during shutdown is expected and harmless.
         eprintln!("Sonic: could not emit state: {err}");

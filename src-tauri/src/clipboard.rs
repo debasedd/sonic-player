@@ -332,7 +332,7 @@ impl ClipboardVault {
     }
 
     /// Writes a captured image to disk and returns its metadata.
-    pub fn store_image(&self, rgba: &[u8], width: u32, height: u32) -> AppResult<StoredImage> {
+    pub fn store_image(&self, rgba: Vec<u8>, width: u32, height: u32) -> AppResult<StoredImage> {
         let dir = crate::config::clipboard_dir();
         fs::create_dir_all(&dir)
             .map_err(|e| AppError::Local(format!("could not create clipboard folder: {e}")))?;
@@ -342,7 +342,7 @@ impl ClipboardVault {
 
         // PNG is lossless: a re-encoded screenshot must not gain compression
         // artifacts, and the clipboard already holds raw pixels.
-        image::RgbaImage::from_raw(width, height, rgba.to_vec())
+        image::RgbaImage::from_raw(width, height, rgba)
             .ok_or_else(|| AppError::Local("captured image had an unexpected pixel layout".into()))?
             .save(&path)
             .map_err(|e| AppError::Local(format!("could not store clipboard image: {e}")))?;
